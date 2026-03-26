@@ -10,6 +10,11 @@ def parse_args():
     parser.add_argument("--topic", required=True)
     parser.add_argument("--output_bq", required=True, help="project:dataset")
     parser.add_argument("--checkpoint", default="/tmp/bd5003/checkpoint")
+    parser.add_argument(
+        "--temp_gcs_bucket",
+        required=True,
+        help="GCS bucket name (without gs://) for BigQuery temporary data",
+    )
     return parser.parse_args()
 
 
@@ -68,6 +73,7 @@ def main():
         (
             batch_df.write.format("bigquery")
             .option("table", table_fqn)
+            .option("temporaryGcsBucket", args.temp_gcs_bucket)
             .mode("append")
             .save()
         )
