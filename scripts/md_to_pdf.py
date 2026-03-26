@@ -1,60 +1,110 @@
 from pathlib import Path
+import markdown
+from bs4 import BeautifulSoup
+
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_LEFT
+from reportlab.lib.enums import TA_LEFT, TA_CENTER
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.units import mm
 
-src = Path('docs/proposal_final.md')
-out = Path('docs/proposal_final.pdf')
+SRC = Path("docs/proposal_final.md")
+OUT = Path("docs/proposal_final.pdf")
 
-text = src.read_text(encoding='utf-8').splitlines()
+md_text = SRC.read_text(encoding="utf-8")
+# Convert markdown to HTML first, then render without markdown symbols.
+html = markdown.markdown(md_text, extensions=["extra", "sane_lists"])
+soup = BeautifulSoup(html, "html.parser")
 
 styles = getSampleStyleSheet()
-normal = ParagraphStyle(
-    'NormalLeft',
-    parent=styles['Normal'],
-    fontName='Helvetica',
-    fontSize=10.5,
-    leading=14,
-    alignment=TA_LEFT,
+
+h1 = ParagraphStyle(
+    "h1",
+    parent=styles["Heading1"],
+    fontName="Helvetica-Bold",
+    fontSize=17,
+    leading=21,
+    alignment=TA_CENTER,
+    spaceAfter=6,
 )
-heading1 = ParagraphStyle('H1', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=16, leading=20)
-heading2 = ParagraphStyle('H2', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=13, leading=17)
-heading3 = ParagraphStyle('H3', parent=styles['Heading3'], fontName='Helvetica-Bold', fontSize=11.5, leading=15)
+h2 = ParagraphStyle(
+    "h2",
+    parent=styles["Heading2"],
+    fontName="Helvetica-Bold",
+    fontSize=13.5,
+    leading=18,
+    alignment=TA_LEFT,
+    spaceBefore=8,
+    spaceAfter=4,
+)
+h3 = ParagraphStyle(
+    "h3",
+    parent=styles["Heading3"],
+    fontName="Helvetica-Bold",
+    fontSize=11.5,
+    leading=15,
+    alignment=TA_LEFT,
+    spaceBefore=6,
+    spaceAfter=2,
+)
+body = ParagraphStyle(
+    "body",
+    parent=styles["BodyText"],
+    fontName="Helvetica",
+    fontSize=10.5,
+    leading=14.5,
+    alignment=TA_LEFT,
+    spaceAfter=4,
+)
+bullet = ParagraphStyle(
+    "bullet",
+    parent=body,
+    leftIndent=12,
+    bulletIndent=0,
+)
 
 story = []
-for line in text:
-    line = line.rstrip()
-    if not line:
-        story.append(Spacer(1, 4))
+
+for node in soup.children:
+    if getattr(node, "name", None) is None:
         continue
 
-    if line.startswith('### '):
-        story.append(Paragraph(line[4:].replace('&', '&amp;'), heading3))
-        story.append(Spacer(1, 3))
-    elif line.startswith('## '):
-        story.append(Paragraph(line[3:].replace('&', '&amp;'), heading2))
-        story.append(Spacer(1, 3))
-    elif line.startswith('# '):
-        story.append(Paragraph(line[2:].replace('&', '&amp;'), heading1))
-        story.append(Spacer(1, 5))
-    elif line.startswith('- '):
-        story.append(Paragraph(f'• {line[2:].replace("&", "&amp;")}', normal))
-    elif line.startswith('```'):
-        # skip markdown fences for simple conversion
-        continue
-    else:
-        safe = line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        story.append(Paragraph(safe, normal))
+    if node.name == "h1":
+        story.append(Paragraph(node.get_text(strip=True), h1))
+        story.append(Spacer(1, 2))
+    elif node.name == "h2":
+        story.append(Paragraph(node.get_text(strip=True), h2))
+    elif node.name == "h3":
+        story.append(Paragraph(node.get_text(strip=True), h3))
+    elif node.name == "p":
+        text = " ".join(node.stripped_strings)
+        if text:
+            story.append(Paragraph(text, body))
+    elif node.name == "ul":
+        for li in node.find_all("li", recursive=False):
+            text = " ".join(li.stripped_strings)
+            if text:
+                story.append(Paragraph(f"• {text}", bullet))
+        story.append(Spacer(1, 2))
+    elif node.name == "ol":
+        idx = 1
+        for li in node.find_all("li", recursive=False):
+            text = " ".join(li.stripped_strings)
+            if text:
+                story.append(Paragraph(f"{idx}. {text}", bullet))
+                idx += 1
+        story.append(Spacer(1, 2))
+    elif node.name == "hr":
+        story.append(Spacer(1, 6))
 
 pdf = SimpleDocTemplate(
-    str(out),
+    str(OUT),
     pagesize=A4,
-    rightMargin=18*mm,
-    leftMargin=18*mm,
-    topMargin=18*mm,
-    bottomMargin=18*mm,
+    leftMargin=18 * mm,
+    rightMargin=18 * mm,
+    topMargin=16 * mm,
+    bottomMargin=16 * mm,
+    title="Wide Project Proposal",
 )
 pdf.build(story)
-print(f'Generated: {out}')
+print(f"Generated polished PDF: {OUT}")
