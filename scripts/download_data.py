@@ -1,15 +1,11 @@
 import argparse
 import csv
-import random
 import pathlib
-from datetime import datetime, timedelta
+from datetime import datetime
 import requests
 
-# Public sample datasets for coursework-friendly quick start.
-SOURCES = {
-    "taxi": "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2024-01.parquet",
-    "weather": "https://raw.githubusercontent.com/vega/vega-datasets/master/data/weather.csv",
-}
+NYC_TAXI_API = "https://data.cityofnewyork.us/resource/gkne-dk5s.csv"
+OPEN_METEO_API = "https://archive-api.open-meteo.com/v1/archive"
 
 
 def download(url: str, output_path: pathlib.Path):
@@ -22,102 +18,109 @@ def download(url: str, output_path: pathlib.Path):
                     f.write(chunk)
 
 
-def generate_taxi_csv(output_path: pathlib.Path, rows: int = 5000):
+def download_taxi_csv(output_path: pathlib.Path, rows: int = 50000):
+    """
+    Download real NYC Yellow Taxi records from NYC Open Data (Socrata).
+    Normalize schema to match Spark job input.
+    """
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = [
+    params = {"$limit": str(rows)}
+    with requests.get(NYC_TAXI_API, params=params, timeout=120) as resp:
+        resp.raise_for_status()
+        raw_rows = list(csv.DictReader(resp.text.splitlines()))
+
+    if not raw_rows:
+        raise RuntimeError("No taxi rows returned from NYC Open Data API.")
+
+    normalized_fields = [
         "tpep_pickup_datetime",
         "fare_amount",
         "trip_distance",
         "PULocationID",
     ]
-    start = datetime(2024, 1, 1, 0, 0, 0)
     with open(output_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=normalized_fields)
         writer.writeheader()
-        for i in range(rows):
-            ts = start + timedelta(minutes=i * 3)
+        for row in raw_rows:
+            pickup = row.get("tpep_pickup_datetime") or row.get("pickup_datetime")
+            fare = row.get("fare_amount")
+            dist = row.get("trip_distance")
+            pu = row.get("pulocationid") or row.get("PULocationID")
+            if not pickup or not fare or not dist or not pu:
+                continue
+            try:
+                float(fare)
+                float(dist)
+                int(float(pu))
+            except ValueError:
+                continue
             writer.writerow(
                 {
-                    "tpep_pickup_datetime": ts.strftime("%Y-%m-%d %H:%M:%S"),
-                    "fare_amount": round(random.uniform(5.0, 60.0), 2),
-                    "trip_distance": round(random.uniform(0.5, 25.0), 2),
-                    "PULocationID": random.randint(1, 265),
+                    "tpep_pickup_datetime": pickup.replace("T", " ").replace("Z", ""),
+                    "fare_amount": fare,
+                    "trip_distance": dist,
+                    "PULocationID": int(float(pu)),
                 }
             )
 
 
-def ensure_weather_schema(input_path: pathlib.Path, output_path: pathlib.Path):
-    """Normalize weather data to required columns: datetime, temperature, precipitation."""
+def download_weather_csv(output_path: pathlib.Path, start_date: str, end_date: str):
+    """
+    Download real historical weather from Open-Meteo for NYC.
+    Output schema: datetime, temperature, precipitation
+    """
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(input_path, "r", encoding="utf-8") as src, open(
-        output_path, "w", newline="", encoding="utf-8"
-    ) as dst:
-        reader = csv.DictReader(src)
-        fieldnames = ["datetime", "temperature", "precipitation"]
-        writer = csv.DictWriter(dst, fieldnames=fieldnames)
+    params = {
+        "latitude": "40.7128",
+        "longitude": "-74.0060",
+        "start_date": start_date,
+        "end_date": end_date,
+        "hourly": "temperature_2m,precipitation",
+        "timezone": "UTC",
+    }
+    with requests.get(OPEN_METEO_API, params=params, timeout=120) as resp:
+        resp.raise_for_status()
+        payload = resp.json()
+
+    hourly = payload.get("hourly", {})
+    timestamps = hourly.get("time", [])
+    temperatures = hourly.get("temperature_2m", [])
+    precipitations = hourly.get("precipitation", [])
+
+    if not timestamps:
+        raise RuntimeError("No weather rows returned from Open-Meteo API.")
+
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["datetime", "temperature", "precipitation"])
         writer.writeheader()
-        written = 0
-        for row in reader:
-            # Vega weather.csv has columns: date, precipitation, temp_max, temp_min, wind, weather
-            dt_raw = row.get("date")
-            if not dt_raw:
-                continue
-            try:
-                dt = datetime.fromisoformat(dt_raw.replace("Z", ""))
-            except ValueError:
-                continue
-            temp_max = row.get("temp_max")
-            temp_min = row.get("temp_min")
-            try:
-                if temp_max is not None and temp_min is not None:
-                    temp = (float(temp_max) + float(temp_min)) / 2.0
-                else:
-                    temp = float(row.get("temperature", "0"))
-            except ValueError:
-                temp = 0.0
-            try:
-                precip = float(row.get("precipitation", "0"))
-            except ValueError:
-                precip = 0.0
+        for ts, temp, precip in zip(timestamps, temperatures, precipitations):
+            dt = datetime.fromisoformat(ts)
             writer.writerow(
                 {
                     "datetime": dt.strftime("%Y-%m-%d %H:%M:%S"),
-                    "temperature": round(temp, 3),
-                    "precipitation": round(precip, 3),
+                    "temperature": temp if temp is not None else 0.0,
+                    "precipitation": precip if precip is not None else 0.0,
                 }
             )
-            written += 1
-        if written == 0:
-            # Fallback minimal synthetic weather rows
-            base = datetime(2024, 1, 1)
-            for i in range(365):
-                writer.writerow(
-                    {
-                        "datetime": (base + timedelta(days=i)).strftime("%Y-%m-%d 00:%M:%S"),
-                        "temperature": round(random.uniform(-5, 35), 2),
-                        "precipitation": round(max(0, random.gauss(2, 3)), 2),
-                    }
-                )
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", default="data/raw")
+    parser.add_argument("--taxi_rows", type=int, default=50000)
+    parser.add_argument("--start_date", default="2024-01-01")
+    parser.add_argument("--end_date", default="2024-01-31")
     args = parser.parse_args()
 
     data_dir = pathlib.Path(args.data_dir)
     taxi_file = data_dir / "taxi" / "yellow_tripdata_sample.csv"
     weather_file = data_dir / "weather" / "weather_sample.csv"
 
-    print("Preparing taxi sample...")
-    # Use synthetic CSV by default to match Spark schema exactly.
-    # (TLC official source is parquet and can be large for first-time setup.)
-    generate_taxi_csv(taxi_file)
+    print("Downloading real NYC taxi sample...")
+    download_taxi_csv(taxi_file, rows=args.taxi_rows)
 
-    print("Downloading weather sample...")
-    weather_raw = data_dir / "weather" / "weather_raw.csv"
-    download(SOURCES["weather"], weather_raw)
-    ensure_weather_schema(weather_raw, weather_file)
+    print("Downloading real NYC weather sample...")
+    download_weather_csv(weather_file, args.start_date, args.end_date)
 
     print(f"Done. Taxi: {taxi_file}")
     print(f"Done. Weather: {weather_file}")

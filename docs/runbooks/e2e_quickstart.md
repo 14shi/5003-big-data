@@ -1,6 +1,6 @@
-# End-to-End Quickstart (Entity Deployment First)
+# End-to-End Quickstart (Cloud Shell)
 
-## 0) Local setup
+## 0) Local setup in Cloud Shell
 ```bash
 chmod +x scripts/bootstrap_local.sh scripts/run_smoke_checks.sh
 ./scripts/bootstrap_local.sh
@@ -8,13 +8,13 @@ source .venv/bin/activate
 ./scripts/run_smoke_checks.sh
 ```
 
-## 1) Download sample datasets automatically
+## 1) Download real public datasets
 ```bash
-python scripts/download_data.py
+python scripts/download_data.py --taxi_rows 50000 --start_date 2024-01-01 --end_date 2024-01-31
 ```
 Outputs:
-- `data/raw/taxi/yellow_tripdata_sample.csv`
-- `data/raw/weather/weather_sample.csv`
+- `data/raw/taxi/yellow_tripdata_sample.csv` (real NYC records)
+- `data/raw/weather/weather_sample.csv` (real NYC historical weather)
 
 ## 2) Provision GCP resources
 ```bash
