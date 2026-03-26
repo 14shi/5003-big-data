@@ -8,6 +8,11 @@ def parse_args():
     parser.add_argument("--input_taxi", required=True)
     parser.add_argument("--input_weather", required=True)
     parser.add_argument("--output_bq", required=True, help="project:dataset")
+    parser.add_argument(
+        "--temp_gcs_bucket",
+        required=True,
+        help="GCS bucket name (without gs://) for BigQuery temporary data",
+    )
     return parser.parse_args()
 
 
@@ -64,6 +69,7 @@ def main():
     (
         mart_trip_hourly.write.format("bigquery")
         .option("table", f"{bq_project}.{bq_dataset}.mart_trip_hourly")
+        .option("temporaryGcsBucket", args.temp_gcs_bucket)
         .mode("overwrite")
         .save()
     )
@@ -71,6 +77,7 @@ def main():
     (
         mart_zone_daily.write.format("bigquery")
         .option("table", f"{bq_project}.{bq_dataset}.mart_zone_daily")
+        .option("temporaryGcsBucket", args.temp_gcs_bucket)
         .mode("overwrite")
         .save()
     )
